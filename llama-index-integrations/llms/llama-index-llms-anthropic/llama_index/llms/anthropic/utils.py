@@ -10,14 +10,18 @@ from llama_index.core.base.llms.types import (
     ImageBlock,
     MessageRole,
     TextBlock,
+    DocumentBlock,
+    CachePoint,
 )
 
 from anthropic.types import (
     MessageParam,
     TextBlockParam,
+    DocumentBlockParam,
     ThinkingBlockParam,
     ImageBlockParam,
     CacheControlEphemeralParam,
+    Base64PDFSourceParam,
 )
 from anthropic.types.tool_result_block_param import ToolResultBlockParam
 from anthropic.types.tool_use_block_param import ToolUseBlockParam
@@ -34,6 +38,8 @@ BEDROCK_INFERENCE_PROFILE_CLAUDE_MODELS: Dict[str, int] = {
     "anthropic.claude-3-5-sonnet-20241022-v2:0": 200000,
     "anthropic.claude-3-5-haiku-20241022-v1:0": 200000,
     "anthropic.claude-3-7-sonnet-20250219-v1:0": 200000,
+    "anthropic.claude-opus-4-20250514-v1:0": 200000,
+    "anthropic.claude-sonnet-4-20250514-v1:0": 200000,
 }
 BEDROCK_CLAUDE_MODELS: Dict[str, int] = {
     "anthropic.claude-instant-v1": 100000,
@@ -50,6 +56,8 @@ VERTEX_CLAUDE_MODELS: Dict[str, int] = {
     "claude-3-5-sonnet-v2@20241022": 200000,
     "claude-3-5-haiku@20241022": 200000,
     "claude-3-7-sonnet@20250219": 200000,
+    "claude-opus-4@20250514": 200000,
+    "claude-sonnet-4@20250514": 200000,
 }
 
 # Anthropic API/SDK identifiers
@@ -72,6 +80,12 @@ ANTHROPIC_MODELS: Dict[str, int] = {
     "claude-3-5-haiku-20241022": 200000,
     "claude-3-7-sonnet-20250219": 200000,
     "claude-3-7-sonnet-latest": 200000,
+    "claude-opus-4-0": 200000,
+    "claude-opus-4-20250514": 200000,
+    "claude-4-opus-20250514": 200000,
+    "claude-sonnet-4-0": 200000,
+    "claude-sonnet-4-20250514": 200000,
+    "claude-4-sonnet-20250514": 200000,
 }
 
 # All provider Anthropic identifiers
@@ -84,17 +98,19 @@ CLAUDE_MODELS: Dict[str, int] = {
 
 
 def is_function_calling_model(modelname: str) -> bool:
-    return "claude-3" in modelname
+    return "-3" in modelname or "-4" in modelname
 
 
 def anthropic_modelname_to_contextsize(modelname: str) -> int:
-    """Get the context size for an Anthropic model.
+    """
+    Get the context size for an Anthropic model.
 
     Args:
         modelname (str): Anthropic model name.
 
     Returns:
         int: Context size for the specific model.
+
     """
     for model, context_size in BEDROCK_INFERENCE_PROFILE_CLAUDE_MODELS.items():
         # Only US & EU inference profiles are currently supported by AWS
@@ -130,7 +146,8 @@ def messages_to_anthropic_messages(
     messages: Sequence[ChatMessage],
     cache_idx: Optional[int] = None,
 ) -> Tuple[Sequence[MessageParam], str]:
-    """Converts a list of generic ChatMessages to anthropic messages.
+    """
+    Converts a list of generic ChatMessages to anthropic messages.
 
     Args:
         messages: List of ChatMessages
@@ -139,6 +156,7 @@ def messages_to_anthropic_messages(
         Tuple of:
         - List of anthropic messages
         - System prompt
+
     """
     anthropic_messages = []
     system_prompt = []
@@ -168,10 +186,10 @@ def messages_to_anthropic_messages(
             )
             anthropic_messages.append(anth_message)
         else:
-            content: list[TextBlockParam | ImageBlockParam] = []
+            content: list[TextBlockParam | ImageBlockParam | DocumentBlockParam] = []
             for block in message.blocks:
                 if isinstance(block, TextBlock):
-                    if block.text:
+                    if block.text or message.additional_kwargs.get("thinking"):
                         content.append(
                             _text_block_to_anthropic_message(
                                 block, message.additional_kwargs
@@ -196,6 +214,17 @@ def messages_to_anthropic_messages(
                         },
                     )
                     content.append(block)
+                elif isinstance(block, DocumentBlock):
+                    content.append(
+                        _document_block_to_anthropic_message(
+                            block=block, kwargs=message.additional_kwargs
+                        )
+                    )
+                elif isinstance(block, CachePoint):
+                    cp = CacheControlEphemeralParam(
+                        **block.model_dump(exclude="block_type")
+                    )
+                    content[-1].update(cache_control=cp)
 
             tool_calls = message.additional_kwargs.get("tool_calls", [])
             for tool_call in tool_calls:
@@ -234,6 +263,22 @@ def _text_block_to_anthropic_message(
         )
     else:
         return TextBlockParam(text=block.text, type="text")
+
+
+def _document_block_to_anthropic_message(
+    block: DocumentBlock, kwargs: dict[str, Any]
+) -> DocumentBlockParam:
+    if not block.data:
+        file_buffer = block.resolve_document()
+        b64_string = block._get_b64_string(data_buffer=file_buffer)
+    else:
+        b64_string = block.data.decode("utf-8")
+    return DocumentBlockParam(
+        source=Base64PDFSourceParam(
+            data=b64_string, media_type="application/pdf", type="base64"
+        ),
+        type="document",
+    )
 
 
 # Function used in bedrock

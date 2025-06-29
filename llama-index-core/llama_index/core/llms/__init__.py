@@ -11,6 +11,9 @@ from llama_index.core.base.llms.types import (
     MessageRole,
     TextBlock,
     AudioBlock,
+    DocumentBlock,
+    CachePoint,
+    CacheControl,
 )
 from llama_index.core.llms.custom import CustomLLM
 from llama_index.core.llms.llm import LLM
@@ -32,4 +35,7 @@ __all__ = [
     "ImageBlock",
     "TextBlock",
     "AudioBlock",
+    "DocumentBlock",
+    "CachePoint",
+    "CacheControl",
 ]
